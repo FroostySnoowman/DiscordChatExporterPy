@@ -11,8 +11,6 @@ bot: Optional[discord.Client] = None
 
 
 def pass_bot(_bot):
-    # Bot is used to fetch a user who is no longer inside a guild
-    # This will stop the user from appearing as 'Unknown' which some people do not want
     global bot
     bot = _bot
 
@@ -149,27 +147,39 @@ class ParseMention:
     async def member_mention(self):
         holder = self.REGEX_MEMBERS, self.REGEX_MEMBERS_2
         for regex in holder:
-            match = re.search(regex, self.content)
-            while match is not None:
+            def _replace(match: re.Match) -> str:
                 member_id = int(match.group(1))
 
                 member = None
-                try:
-                    member = self.guild.get_member(member_id) or bot.get_user(member_id)
-                    member_name = member.display_name
-                except AttributeError:
-                    member_name = member
+                member_name = None
+
+                if self.guild is not None:
+                    try:
+                        member = self.guild.get_member(member_id)
+                    except AttributeError:
+                        member = None
+
+                if member is None and bot is not None:
+                    try:
+                        member = bot.get_user(member_id)
+                    except AttributeError:
+                        member = None
 
                 if member is not None:
-                    replacement = '<span class="mention" title="%s">@%s</span>' \
-                                  % (str(member_id), str(member_name))
+                    member_name = getattr(member, "display_name", None) or getattr(
+                        member, "name", str(member_id)
+                    )
+                    return '<span class="mention" title="%s">@%s</span>' % (
+                        str(member_id),
+                        str(member_name),
+                    )
                 else:
-                    replacement = '<span class="mention" title="%s">&lt;@%s></span>' \
-                                  % (str(member_id), str(member_id))
-                self.content = self.content.replace(self.content[match.start():match.end()],
-                                                    replacement)
+                    return '<span class="mention" title="%s">&lt;@%s></span>' % (
+                        str(member_id),
+                        str(member_id),
+                    )
 
-                match = re.search(regex, self.content)
+            self.content = re.sub(regex, _replace, self.content)
 
     async def time_mention(self):
         holder = self.REGEX_TIME_HOLDER
@@ -191,14 +201,9 @@ class ParseMention:
                     tooltip_time = datetime_stamp.strftime("%A, %e %B %Y at %H:%M")
                     tooltip_time = tooltip_time.replace(str(datetime_stamp.year), str(time_stamp[0]))
                 except (OSError, OverflowError, ValueError):
-                    # overflow error occurs when timestamp is too large, manual parsing
-                    # Project the timestamp into a safe range that doesn't cause issues with system or python limitations
-                    # Strip out 400-year chunks until the timestamp fits in Python's logic
                     safe_ts = timestamp % self.CYCLE_SECONDS
                     years_shifted = (timestamp // self.CYCLE_SECONDS) * 400
-                    # Create the datetime object using the safe timestamp
                     dt = datetime.datetime.fromtimestamp(safe_ts, pytz.utc)
-                    # Format normally, but inject the real year calculation
                     final_year = dt.year + years_shifted
                     ui_time = dt.strftime(strf)
                     ui_time = ui_time.replace(str(dt.year), str(final_year))
